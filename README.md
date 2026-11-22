@@ -62,6 +62,8 @@ python3 ung220z.py -i 192.168.1.1 -u user -p '你的密码' --no-browser
 | `--no-browser` | 不调用浏览器，纯 HTTP 请求 |
 | `--unlock` | Web 被会话锁占住时重启 httpd 解锁 |
 | `--no-release` | 不尝试释放残留 Web 会话 |
+| `--telnet-port` | Telnet 端口，默认 23 |
+| `--timeout` | 网络超时秒数，默认 8 |
 
 ## 输出示例
 
@@ -136,3 +138,26 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 ### 登录失败次数超限
 
 设备通常 3 次失败进入延时校验，**停止重试**，静默等待 10~30 分钟。
+
+## 修复记录
+
+### v1.1（合并社区反馈）
+
+| 问题 | 影响 | 修复 |
+|---|---|---|
+| `ls` 的 stderr 也落在 pty 上 | 解密失败被判成功，最后打印一张空凭据表 | 改用 `test -s && echo __OK__` 判定 |
+| `sed` 区间在单行 XML 上失效 | 所有表混在一起，PPPoE/WiFi 被当成 Web 账号 | 新增 `Cfg` 类，整份 `cat` 一次后本地按 `<Tbl>` 切表（顺带把 6 次往返压成 1 次） |
+| Web 页为 GBK 时解码失败 | `其他用户` 匹配不到，`--unlock` 形同虚设 | `_decode` 优先取响应头 charset，再 utf-8→gbk→gb18030 回退 |
+| 无 try/finally | 断线时裸 traceback，设备上残留明文配置 | `finally` 中 `rm -f /tmp/debug-decry-cfg`、关闭 Telnet 与日志；日志文件 0600 |
+| 口令 `.strip()` | 首尾空格是口令一部分时被改坏 | 改为 `rstrip("\r\n")` |
+| URL 明文写日志 | 口令泄漏到日志文件 | 日志中 `psw=***` |
+| 固定 marker `__X__` | 配置内容恰好包含该串时输出被截断 | 每次随机 marker |
+| `IAC IAC` 未处理 | 吃掉一个 0xFF 字节 | 按 telnet 规范输出字面量 |
+| 缺 openssl 时静默 | root 比对无声失败 | 明确提示 |
+
+退出码语义：`0` 成功 / `1` 参数或异常 / `2` 网关不可达 / `3` Telnet 端口未开 / `4` 登录失败 / `5` 配置解密失败 / `130` 用户中断。
+
+## 致谢
+
+- **蓝色大肥鱼** —— 指出并修复了三处会导致「静默假失败」的关键缺陷（解密校验、单行 XML 串表、GBK 解码），并补充了异常清理、口令边界、日志脱敏等改进。原始补丁见 PR #6。
+- **[@yitan-xini](https://github.com/yitan-xini)** —— 代为整理与提交上述补丁。
