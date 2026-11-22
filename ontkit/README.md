@@ -9,6 +9,7 @@
 | 九联 UNG853H | 九联（移动定制） | ZTE 系 | 80 | `.gch` + `lastgood.xml` | 推断，待真机验证 |
 | 吉比特 H3-2 | 吉比特 | ZTE 系 | 80 | `.gch` + `sendcmd` | 推断，待真机验证 |
 | 中兴 ZXHN G7615 | 中兴 | ZTE 系 | 8080 | `webFac` 工厂模式 | 协议已按公开实现移植 |
+| 烽火 HG6042A1 | 烽火 | FiberHome | 8080 | `telnetenable.cgi?key=<MAC>` | 有公开案例，未复现 |
 | 华为 HS8145X6 | 华为 | 华为 ssmp | 80 | Web 登录 → 开 Telnet | 实验性 |
 | 华为 B866-L1 | 华为 | 华为 ssmp | 80 | 同上 | 实验性 |
 
@@ -99,3 +100,23 @@ sidbg 1 DB decry /userconfig/cfg/db_user_cfg.xml
 - 华为/中兴的 Web 登录都有失败计数（通常 3 次），本工具已把尝试上限设为 3 次并在达到后停止
 - 若设备已因多次失败进入延时校验，请静默等待 10~30 分钟再试，不要继续重试
 - 首次在真机上运行时建议加 `--mode web` 只做只读探测，确认流程后再开启 `--enable-telnet`
+
+## 烽火（FiberHome）流程
+
+公开实操来源：[阿凡博客 · 烽火光猫 HG6042A1](https://blog.iafan.com/post-6.html)
+
+```bash
+python3 -m ontkit fiberhome -H 192.168.1.1 -m AA:BB:CC:DD:EE:FF
+```
+
+1. `GET http://<ip>:8080/cgi-bin/telnetenable.cgi?telnetenable=1&key=<MAC大写12位>`
+2. Telnet：`admin` / `Fh@<MAC 后六位大写>`
+3. `load_cli factory` → `show admin_name` / `show admin_pwd`
+4. 需要 su 时：`root` / `hg2x0`（部分固件）
+
+## 其他机型的公开案例
+
+| 机型 | 关键点 | 来源 |
+|---|---|---|
+| 九联 UNG953h1-S | Telnet 默认 `useradmin/useradmin`；超密在加密的 `lastgood.xml` | [cnblogs](https://www.cnblogs.com/Prego/p/22631311) |
+| 移动 GM232 | `telnet.gch` 中 `%` 必须写成 `%25`；Telnet 口令在 `config.bin`（RouterPassView 搜 `TS_UPwd`） | [萝卜头论坛](https://bbs.luobotou.org/forum.php?mod=viewthread&tid=49623) |
