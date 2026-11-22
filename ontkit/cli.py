@@ -53,6 +53,8 @@ def cmd_probe(a):
             log("DATA", "  特征：华为 ssmp 框架")
         if "unionman" in low:
             verdict.append("unionman")
+        if "fiberhome" in low or "fhdata" in low:
+            verdict.append("fiberhome")
         try:
             wf, wst = h.post("/webFac", "SendSq.gch", raw=False)
             log("DATA", "  /webFac → %s" % wst)
@@ -66,6 +68,8 @@ def cmd_probe(a):
         family = "zte"
     elif any("huawei" in v for v in verdict):
         family = "huawei"
+    elif any("fiberhome" in v for v in verdict):
+        family = "fiberhome"
     log("INFO", "判定家族：%s" % family)
     if family == "unknown":
         log("WARN", "未匹配到已知光猫框架：可能是路由器、或非常规定制的固件")
@@ -120,6 +124,25 @@ def cmd_zte(a):
         else:
             log("WARN", "Telnet 登录失败")
     return 0
+
+
+# ─────────────────────────── fiberhome ───────────────────────────
+def cmd_fiberhome(a):
+    from . import fiberhome
+
+    mac = a.mac
+    if not mac:
+        mac = input("光猫 MAC（背面标签，如 AA:BB:CC:DD:EE:FF）: ").strip()
+    fh = fiberhome.FiberHome(a.host, a.port)
+    try:
+        name, pwd = fh.run(mac) or (None, None)
+    except Exception as e:
+        log("WARN", "%s: %s" % (e.__class__.__name__, e))
+        return 1
+    if pwd:
+        log("INFO", "超管账号：%s  密码：%s" % (name or "telecomadmin", pwd))
+        return 0
+    return 4
 
 
 # ─────────────────────────── huawei ───────────────────────────
@@ -195,6 +218,12 @@ def main(argv=None):
     z.add_argument("--enable-telnet", action="store_true", help="写入 TelnetCfg 使 Telnet 自启")
     z.add_argument("--extract", action="store_true", help="解密配置并提取凭据")
     z.set_defaults(func=cmd_zte)
+
+    fh = sub.add_parser("fiberhome", help="烽火系：用 MAC 开 Telnet 并读超密")
+    fh.add_argument("-H", "--host", required=True)
+    fh.add_argument("-p", "--port", type=int, default=8080)
+    fh.add_argument("-m", "--mac", default=None, help="设备 MAC，省略则交互输入")
+    fh.set_defaults(func=cmd_fiberhome)
 
     h = sub.add_parser("huawei", help="华为系：登录 / 开 Telnet / shell")
     h.add_argument("-H", "--host", required=True)

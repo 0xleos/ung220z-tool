@@ -153,16 +153,18 @@ def unlock_web(ip, tn):
 
 def enable_telnet(ip, user, pw, open_browser=True):
     base = "http://%s/" % ip
+    # 口令里的 % & # ? + 空格 必须先百分号编码，否则服务器会返回 400 Bad Request
+    # （社区实测：aDm8H%MdA 必须写成 aDm8H%25MdA）
+    quoted = "%susr=%s&psw=%s&cmd=1&telnet.gch" % (
+        base, urllib.parse.quote(user, safe=""), urllib.parse.quote(pw, safe=""))
     raw = "%susr=%s&psw=%s&cmd=1&telnet.gch" % (base, user, pw)
-    variants = [
-        raw,
-        "%susr=%s&psw=%s&cmd=1&telnet.gch" % (base, urllib.parse.quote(user),
-                                              urllib.parse.quote(pw, safe="")),
-        "%s?usr=%s&psw=%s&cmd=1&telnet.gch" % (base, user, urllib.parse.quote(pw, safe="")),
-    ]
+    risky = any(c in (user + pw) for c in "%&#?+ ")
+    variants = [quoted, raw] if risky else [raw, quoted]
+    variants.append("%s?usr=%s&psw=%s&cmd=1&telnet.gch" % (
+        base, urllib.parse.quote(user, safe=""), urllib.parse.quote(pw, safe="")))
     if open_browser:
         try:
-            opened = webbrowser.open(raw)
+            opened = webbrowser.open(variants[0])
             log("HTTP", "已发送给浏览器%s: http://%s/usr=%s&psw=***&cmd=1&telnet.gch"
                 % ("" if opened else "（无可用浏览器，改由脚本直连）", ip, user))
         except Exception as e:

@@ -177,6 +177,13 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 
 ## 修复记录
 
+### v1.2
+
+| 问题 | 修复 |
+|---|---|
+| 口令含 `%` 时 URL 被当成非法转义，服务器返回 400 | 检测 `% & # ? + 空格`，优先发送百分号编码版（`aDm8H%MdA` → `aDm8H%25MdA`） |
+| 缺少烽火（FiberHome）支持 | 新增 `ontkit fiberhome` + `models/hg6042a1.py`，用 MAC 开 Telnet 并读 `show admin_pwd` |
+
 ### v1.1（合并社区反馈）
 
 | 问题 | 影响 | 修复 |
@@ -223,21 +230,44 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 
 ## 机型兼容性
 
-> **重要：只有 UNG220Z 经过真机验证。** 其余型号是根据 issue 日志和公开资料做的推断，
-> 没有设备可测。请把它们当作「排查方向」而不是「已支持」。
+> **只有 UNG220Z 是作者真机验证的。** 其余型号来自社区公开案例或 issue 日志，
+> 标注 📄 表示「有别人的成功记录，但我没有复现」。
 
-| 型号 | 验证状态 | 现象 | 推断 | 下一步 |
-|---|---|---|---|---|
-| UNG220Z | ✅ 真机验证 | 全流程通过 | 中兴 `.gch` | 直接跑 `ung220z.py` |
-| UNP720Z | ⚠️ 未验证 | `telnet.gch` 成功，Telnet 登录被拒 | Telnet 与 Web 两套账号 | 先手试 `useradmin/useradmin` |
-| HG6042A1 | ⚠️ 未验证 | `telnet.gch` 400，页面含 `get_factory_mode` | 中兴工厂模式 | 试 `ontkit zte --mode factory` |
-| GM232（V1A0.A04.01） | ❌ 未知 | 404 / 400 | **固件家族未知** | 需 `Server` 头与登录页标题 |
-| SK-D740L | ❌ 未知 | 23 端口未开放 | **未知** | 先确认 Web 后台有无 Telnet 开关 |
-| 返回 `Mini web server` | ❌ 不适用 | 404 | 通用 Web 服务器 | 非本工具适用机型 |
+| 型号 | 状态 | 关键方法 | 来源 |
+|---|---|---|---|
+| UNG220Z | ✅ 真机验证 | `telnet.gch` → 越权读账号 → `sidbg` 解密 | 本项目实测 |
+| UNG953h1-S | 📄 公开案例 | Telnet 默认 `useradmin/useradmin`；配置解密用 `lastgood.xml` | [cnblogs](https://www.cnblogs.com/Prego/p/22631311) |
+| HG6042A1 | 📄 公开案例 | **烽火**：`/cgi-bin/telnetenable.cgi?telnetenable=1&key=<MAC>`，登录 `admin/Fh@<MAC后6位>`，`load_cli factory` → `show admin_pwd` | [阿凡博客](https://blog.iafan.com/post-6.html) |
+| GM232 | 📄 公开案例 | `telnet.gch` **必须把 `%` 编码成 `%25`**；Telnet 口令在 `config.bin` 备份里（RouterPassView 搜 `TS_UPwd`） | [萝卜头论坛](https://bbs.luobotou.org/forum.php?mod=viewthread&tid=49623) |
+| UNP720Z | ⚠️ 未验证 | 仅知 `telnet.gch` 成功但 Telnet 账号不同 | issue 反馈 |
+| SK-D740L | ❌ 无资料 | 仅知 23 端口未开 | issue 反馈 |
 
-图例：✅ 作者真机跑通 / ⚠️ 依据日志或公开资料推断，未验证 / ❌ 信息不足或不适用
+### 关于 `%` 的坑（重要）
 
-判断方法：脚本失败时会打印 `指纹 Server=... title=... 特征=...`，把这一行贴到 issue 即可。
+早期版本直接把口令拼进 URL，`aDm8H%MdA` 会被当成非法百分号转义，服务器返回 **400 Bad Request**。
+v1.2 起检测到 `% & # ? + 空格` 时优先发送编码版：
+
+```
+http://192.168.1.1/usr=CMCCAdmin&psw=aDm8H%25MdA&cmd=1&telnet.gch
+```
+
+### 烽火机型
+
+```bash
+python3 -m ontkit fiberhome -H 192.168.1.1 -m AA:BB:CC:DD:EE:FF
+# 或
+python3 models/hg6042a1.py -H 192.168.1.1 -m AA:BB:CC:DD:EE:FF
+```
+
+流程：用 MAC 开 Telnet → `admin/Fh@<MAC后6位>` 登录 → `load_cli factory` → `show admin_pwd`。
+
+### GM232 这类「Telnet 选项时有时无」的机型
+
+社区经验：Telnet 开关只在**恢复出厂、TR-069 下发配置之前**存在。所以顺序是：
+
+1. 恢复出厂 → 用 `CMCCAdmin / aDm8H%MdA` 登录（此时是默认超密）
+2. 立刻开 Telnet（`telnet.gch` 或「管理 → 设备管理」里的选项）
+3. 再去「备份配置文件」下载 `config.bin`，用 RouterPassView 搜 `TS_UPwd`
 
 ## 免责声明
 
