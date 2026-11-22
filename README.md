@@ -195,8 +195,31 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 
 ## 致谢
 
-- **蓝色大肥鱼** —— 指出并修复了三处会导致「静默假失败」的关键缺陷（解密校验、单行 XML 串表、GBK 解码），并补充了异常清理、口令边界、日志脱敏等改进。原始补丁见 PR #6。
-- **[@yitan-xini](https://github.com/yitan-xini)** —— 代为整理与提交上述补丁。
+这个工具的可靠性，很大程度上来自各位使用者愿意花时间把失败日志贴出来。
+感谢每一位提交 issue、PR 的朋友：
+
+**代码贡献**
+
+- **蓝色大肥鱼**（GitHub [@yitan-xini](https://github.com/yitan-xini) 代为整理提交）——
+  发现并修复了三处会导致「静默假失败」的关键缺陷：解密校验拿到 `ls` 的 stderr 就判成功、
+  单行 XML 下 `sed` 区间失效导致串表、GBK 页面让会话锁检测永远失效。
+  同时补上了异常清理、口令边界处理、日志脱敏等改进。原始补丁见
+  [PR #6](https://github.com/Hut-hzf/ung220z-tool/pull/6)。
+
+**问题反馈**
+
+- [@YousCheng040727](https://github.com/YousCheng040727) —— [issue #7](https://github.com/Hut-hzf/ung220z-tool/issues/7)：
+  首个报告 `telnet.gch` 返回 404 的案例，直接促成了「固件指纹识别 + 分家族建议」这组功能。
+- [@jingffei](https://github.com/jingffei) —— [issue #3](https://github.com/Hut-hzf/ung220z-tool/issues/3)：
+  HG6042A1 的日志里出现了 `get_factory_mode`，第一次让人看清「这是中兴工厂模式，不是 `.gch`」。
+- [@Dragon307](https://github.com/Dragon307) —— issue #3：
+  完整复现了「`telnet.gch` 成功但 Telnet 登录被拒」的场景，验证了 Web 与 Telnet 两套账号库的判断。
+- [@kiddx01](https://github.com/kiddx01) —— issue #3：GM232（V1A0.A04.01）的 404/400 记录。
+- [@meetinnet](https://github.com/meetinnet) —— issue #3：`[Mini web server]` 案例，确认了非 `.gch` 固件的边界。
+- [@Cube-sugar258](https://github.com/Cube-sugar258) —— issue #3：SK-D740L 的 23 端口未开放案例。
+
+如果上面的名单漏了你，或者你的报告还没被修复——欢迎继续开 issue，
+附上脚本打印的 `指纹 Server=... title=... 特征=...` 那一行，定位会快很多。
 
 ## 机型兼容性
 
