@@ -223,18 +223,21 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 
 ## 机型兼容性
 
-根据 issue 反馈整理，不同固件差异极大，报错前请先对照：
+> **重要：只有 UNG220Z 经过真机验证。** 其余型号是根据 issue 日志和公开资料做的推断，
+> 没有设备可测。请把它们当作「排查方向」而不是「已支持」。
 
-| 型号 | 现象 | 判断 | 下一步 |
-|---|---|---|---|
-| UNG220Z | 全流程通过 | 中兴 `.gch` | ✅ 目标机型 |
-| UNP720Z | `telnet.gch` 成功，Telnet 登录被拒 | Telnet 与 Web 两套账号 | 先用 `useradmin/useradmin`，新版会依次试 8 组 |
-| HG6042A1 | `telnet.gch` 400，页面含 `get_factory_mode` | 中兴工厂模式 | `ontkit zte --mode factory` |
-| GM232（V1A0.A04.01） | 404 / 400 | 非 `.gch` 或路径不同 | 提供登录页标题与 `Server` 头 |
-| SK-D740L | 23 端口未开放 | Telnet 服务未启用 | 先在 Web 后台开启，或确认固件是否支持 |
-| 返回 `Mini web server` | 404 | 通用 Web 服务器 | 不是本工具适用机型 |
+| 型号 | 验证状态 | 现象 | 推断 | 下一步 |
+|---|---|---|---|---|
+| UNG220Z | ✅ 真机验证 | 全流程通过 | 中兴 `.gch` | 直接跑 `ung220z.py` |
+| UNP720Z | ⚠️ 未验证 | `telnet.gch` 成功，Telnet 登录被拒 | Telnet 与 Web 两套账号 | 先手试 `useradmin/useradmin` |
+| HG6042A1 | ⚠️ 未验证 | `telnet.gch` 400，页面含 `get_factory_mode` | 中兴工厂模式 | 试 `ontkit zte --mode factory` |
+| GM232（V1A0.A04.01） | ❌ 未知 | 404 / 400 | **固件家族未知** | 需 `Server` 头与登录页标题 |
+| SK-D740L | ❌ 未知 | 23 端口未开放 | **未知** | 先确认 Web 后台有无 Telnet 开关 |
+| 返回 `Mini web server` | ❌ 不适用 | 404 | 通用 Web 服务器 | 非本工具适用机型 |
 
-判断方法：脚本失败时会自动打印 `指纹 Server=... title=... 特征=...`，把这行贴出来即可。
+图例：✅ 作者真机跑通 / ⚠️ 依据日志或公开资料推断，未验证 / ❌ 信息不足或不适用
+
+判断方法：脚本失败时会打印 `指纹 Server=... title=... 特征=...`，把这一行贴到 issue 即可。
 
 ## 免责声明
 
