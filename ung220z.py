@@ -390,12 +390,14 @@ def crack_root(hashed, candidates):
 
 # ─────────────────── Web 侧侦察（读 Telnet 口令） ───────────────────
 DEFAULT_CREDS = [
+    ("useradmin", "useradmin"),        # 九联 UNG/UNP 系列实测默认值
     ("CMCCAdmin", "aDm8H%MdA"),
     ("CMCCAdmin", "UM@Pon521"),
     ("telecomadmin", "nE7jA%5m"),
     ("root", "adminHW"),
     ("root", "Zte521"),
     ("admin", "admin"),
+    ("user", "user"),
 ]
 
 
@@ -629,6 +631,8 @@ def main():
         mark = tn.run("test -s %s && echo __OK__ || echo __NO__" % CFG_DEC, timeout=a.timeout)
         if "__OK__" not in mark:
             log("WARN", "配置解密失败（sidbg 返回: %s）" % (dec[:80] or "空"))
+            log("HINT", "九联/中兴方案的配置也可能在 /config/work/lastgood.xml（加密）")
+            log("HINT", "解密工具：https://github.com/joestar817/decrypt-lastgood")
             return 5
         log("SHELL", "sidbg 1 DB decry %s → %s" % (CFG_ENC, CFG_DEC))
 
