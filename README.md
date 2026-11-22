@@ -1,6 +1,7 @@
 # ung220z-tool
 
-针对 **UNG220Z（九联 / Unionman 中国移动光猫）** 的一键凭据提取工具。
+针对 **UNG220Z（九联 / Unionman 中国移动光猫）** 的一键凭据提取工具，
+并附带多厂商适配工具包 `ontkit`（中兴 / 华为 / 九联系列）。
 
 > ⚠️ 仅用于**你自己的设备**，用于找回自己忘记的管理密码、迁移宽带配置或安全自查。
 > 未经授权对他人设备使用属于违法行为，作者不承担任何责任。
@@ -8,6 +9,20 @@
 ## 背景
 
 这类光猫的 Web 管理页基于 `.gch` CGI 框架，登录口令由 TR-069 定期轮换，普通用户拿到的密码往往几天就失效。本工具走 Telnet 通道，直接读取设备配置库，拿到**当下有效**的全部凭据。
+
+## 目录结构
+
+```
+ung220z.py          # 主脚本：UNG220Z 一键提权 + 提凭据
+ontkit/             # 多厂商适配包
+├── cli.py          #   probe / zte / huawei 三个子命令
+├── zte_factory.py  #   中兴 webFac 工厂模式（AES-ECB 协议）
+├── zte_web.py      #   中兴 .gch 登录、配置解密、凭据提取
+├── huawei.py       #   华为 ssmp 登录、开 Telnet（实验性）
+└── core.py         #   HTTP 会话 + Telnet 客户端
+models/             # 按型号的入口脚本（自动补默认端口）
+├── ung853h.py  h3_2.py  g7615.py  hs8145x6.py  b866l1.py
+```
 
 ## 工作流程
 
@@ -95,9 +110,30 @@ python3 ung220z.py -i 192.168.1.1 -u user -p '你的密码' --no-browser
 | 配置解密 | `sidbg 1 DB decry` 无口令即可解密，得到明文 XML |
 | root 口令 | `/etc/shadow` 中为 SHA-256 crypt，工具会用常见出厂口令比对 |
 
-## 免责声明
+## 多厂商支持（ontkit）
 
-本项目仅用于教育与自有设备维护。使用者应确保对目标设备拥有合法管理权限。
+主脚本只针对九联 `.gch` 体系。遇到其他固件时用 `ontkit`：
+
+```bash
+# 先识别固件家族
+python3 -m ontkit probe -H 192.168.1.1
+
+# 中兴系（G7615 / UNG853H / 吉比特等）：走 webFac 工厂模式开 Telnet
+python3 -m ontkit zte -H 192.168.1.1 -p 8080 --mode factory --enable-telnet
+
+# 华为系（HS8145X6 / B866-L1 等）
+python3 -m ontkit huawei -H 192.168.1.1
+```
+
+按型号直接跑：
+
+```bash
+python3 models/g7615.py    -H 192.168.1.1 --mode factory
+python3 models/ung853h.py  -H 192.168.1.1 -u user -P '贴纸密码' --extract
+```
+
+各型号的验证状态见 [ontkit/README.md](ontkit/README.md)：webFac 协议按公开实现移植并已自测，
+其余型号未经真机验证。
 
 ## 排障
 
@@ -176,3 +212,7 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 | 返回 `Mini web server` | 404 | 通用 Web 服务器 | 不是本工具适用机型 |
 
 判断方法：脚本失败时会自动打印 `指纹 Server=... title=... 特征=...`，把这行贴出来即可。
+
+## 免责声明
+
+本项目仅用于教育与自有设备维护。使用者应确保对目标设备拥有合法管理权限。
