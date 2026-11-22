@@ -5,12 +5,19 @@
 注意：不同厂商默认端口不同（中兴 8080，九联/吉比特多为 80）。
 """
 import base64
+import html as html_mod
 import re
 
 from .core import Http, Telnet, log
 
 CFG_ENC = "/userconfig/cfg/db_user_cfg.xml"
 CFG_DEC = "/tmp/debug-decry-cfg"
+
+
+def _unescape(v):
+    """还原 JS 的 \\xNN 转义与 HTML 实体。"""
+    v = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), v)
+    return html_mod.unescape(v)
 
 
 class ZteWeb:
@@ -55,14 +62,18 @@ class ZteWeb:
 
     @staticmethod
     def values(html):
-        return {k: v for k, v in re.findall(r"Transfer_meaning\('([A-Za-z_0-9]+)','((?:[^'\\]|\\.)*)'\)", html)
-                if v and not k.startswith("IF_")}
+        """解析 Transfer_meaning 键值；设备常把 @ 写成 \\x40，需还原。"""
+        out = {}
+        for k, v in re.findall(r"Transfer_meaning\('([A-Za-z_0-9]+)','((?:[^'\\]|\\.)*)'\)", html):
+            if v and not k.startswith("IF_"):
+                out[k] = _unescape(v)
+        return out
 
     @staticmethod
     def rows(html):
         out = []
         for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
-            cells = [re.sub(r"<[^>]+>", "", c).strip()
+            cells = [_unescape(re.sub(r"<[^>]+>", "", c)).strip()
                      for c in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
             cells = [c for c in cells if c]
             if len(cells) >= 2:

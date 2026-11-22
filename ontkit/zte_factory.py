@@ -10,7 +10,6 @@
        （version=2 时先发 SendInfo.gch，payload 由本机 MAC 反推）
     5. POST webFacEntry AES(FactoryMode.gch...)     返回 telnet 账号密码
 """
-import hashlib
 import re
 import time
 import urllib.error

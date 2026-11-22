@@ -53,20 +53,24 @@ class HuaweiWeb:
         log("PROBE", "GET / → %d，特征 %s" % (st, marks))
         return html
 
-    def login(self, user, pw):
-        """尝试华为常见登录方式，返回是否成功。"""
+    def login(self, user, pw, schemes=None):
+        """尝试华为常见登录方式，返回是否成功。
+
+        schemes 为 None 时依次尝试 plain/b64/sha256；传入列表可限制尝试次数。
+        """
         page, _ = self.http.get("/")
         token = ""
         m = re.search(r'name="Frm_Logintoken"[^>]*value="([^"]*)"', page)
         if m:
             token = m.group(1)
 
-        schemes = [
-            ("plain", pw),
-            ("b64", base64.b64encode(pw.encode()).decode()),
-            ("sha256-b64", base64.b64encode(hashlib.sha256(pw.encode()).digest()).decode()),
-            ("sha256-hex", hashlib.sha256(pw.encode()).hexdigest()),
-        ]
+        if schemes is None:
+            schemes = [
+                ("plain", pw),
+                ("b64", base64.b64encode(pw.encode()).decode()),
+                ("sha256-b64", base64.b64encode(hashlib.sha256(pw.encode()).digest()).decode()),
+                ("sha256-hex", hashlib.sha256(pw.encode()).hexdigest()),
+            ]
         for name, value in schemes:
             if self.attempts >= MAX_ATTEMPTS:
                 log("WARN", "已尝试 %d 次，停止以免触发账号锁定" % self.attempts)
@@ -97,13 +101,18 @@ class HuaweiWeb:
             return False
 
     def try_default_accounts(self):
-        log("INFO", "尝试默认账号（最多 %d 次，超出会锁账号）" % MAX_ATTEMPTS)
+        """每个默认账号只试 1 次（明文），把 3 次机会留给 3 个账号。
+
+        若确认账号正确但编码方式不对，请用 -u/-P 显式指定，会走完整编码尝试。
+        """
+        log("INFO", "尝试默认账号，每账号 1 次（共 %d 次，超出会锁账号）" % MAX_ATTEMPTS)
         for u, p in DEFAULT_ACCOUNTS:
             if self.attempts >= MAX_ATTEMPTS:
                 break
-            if self.login(u, p):
+            if self.login(u, p, schemes=[("plain", p)]):
                 log("DATA", "登录成功：%s / %s" % (u, p))
                 return u, p
+        log("WARN", "默认账号均失败；如确认账号，请用 -u/-P 指定以尝试编码变体")
         return None
 
     def enable_telnet(self):

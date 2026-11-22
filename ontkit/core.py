@@ -10,6 +10,23 @@ import urllib.request
 
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
 
+_CHARSET_RE = re.compile(r"charset=([A-Za-z0-9_-]+)", re.I)
+
+
+def decode_body(raw, ctype=""):
+    """光猫页面常为 GBK：先按响应头 charset，再 utf-8 → gbk → gb18030 回退。"""
+    encs = []
+    m = _CHARSET_RE.search(ctype or "")
+    if m:
+        encs.append(m.group(1))
+    encs += ["utf-8", "gbk", "gb18030"]
+    for enc in encs:
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace")
+
 
 def log(tag, msg):
     print("[%s] %-6s %s" % (time.strftime("%H:%M:%S"), tag, msg), flush=True)
@@ -28,7 +45,9 @@ class Http:
     def get(self, path, raw=False):
         with self.op.open(self.base + path, timeout=self.timeout) as r:
             data = r.read()
-            return (data if raw else data.decode("utf-8", "replace")), r.status
+            if raw:
+                return data, r.status
+            return decode_body(data, r.headers.get("Content-Type", "")), r.status
 
     def post(self, path, body, raw=False, ctype=None):
         if isinstance(body, str):
@@ -38,7 +57,9 @@ class Http:
             req.add_header("Content-Type", ctype)
         with self.op.open(req, timeout=self.timeout) as r:
             data = r.read()
-            return (data if raw else data.decode("utf-8", "replace")), r.status
+            if raw:
+                return data, r.status
+            return decode_body(data, r.headers.get("Content-Type", "")), r.status
 
     def post_form(self, path, data):
         return self.post(path, urllib.parse.urlencode(data), ctype="application/x-www-form-urlencoded")

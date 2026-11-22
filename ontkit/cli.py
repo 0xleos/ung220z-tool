@@ -177,22 +177,33 @@ def cmd_huawei(a):
 
 
 def _local_macs():
-    import fcntl
-    import struct
+    """尽量拿到本机网卡 MAC；Linux 用 ioctl，其它平台退到 uuid.getnode()。"""
     macs = []
     try:
-        for name in ("wlan0", "eth0", "enp0s3"):
+        import fcntl
+        import struct
+        for name in ("wlan0", "eth0", "enp0s3", "enp0s8"):
             try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack("256s", name.encode()[:15]))
-                mac = info[18:24]
+                sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                info = fcntl.ioctl(sk.fileno(), 0x8927, struct.pack("256s", name.encode()[:15]))
+                mac = bytes(info[18:24])
+                sk.close()
                 if len(mac) == 6 and mac != b"\x00" * 6:
-                    macs.append(bytes(mac))
-                s.close()
+                    macs.append(mac)
             except Exception:
                 continue
-    except Exception:
-        pass
+    except ImportError:
+        pass          # Windows / macOS 没有 fcntl
+    if not macs:
+        try:
+            import uuid
+            node = uuid.getnode()
+            mac = node.to_bytes(6, "big")
+            if mac != b"\x00" * 6:
+                macs.append(mac)
+                log("WARN", "未能枚举网卡，使用 uuid.getnode() 猜测 MAC（可能不是面对光猫的网卡）")
+        except Exception:
+            pass
     return macs or [bytes.fromhex("000729553557")]
 
 
