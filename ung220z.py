@@ -184,6 +184,10 @@ def enable_telnet(ip, user, pw, open_browser=True):
         if "Success" in body:
             log("HTTP", "telnet.gch → TelnetSet Success!")
             return True
+        if "get_factory_mode" in body:
+            log("HTTP", "telnet.gch → 返回了中兴工厂模式页面")
+            log("HINT", "该设备支持工厂模式：python3 -m ontkit zte -H %s -p 8080 --mode factory" % ip)
+            continue
         txt = re.sub(r"<[^>]+>", " ", body).strip()
         log("HTTP", "telnet.gch → %s" % (txt[:60] if txt else "空响应"))
     if missing:
@@ -191,27 +195,51 @@ def enable_telnet(ip, user, pw, open_browser=True):
     return False
 
 
+MARKERS = [
+    ("getpage.gch", "中兴 .gch 系"),
+    ("frm_logintoken", "中兴 .gch 系"),
+    ("get_factory_mode", "中兴工厂模式页"),
+    ("ssmp", "华为 ssmp 系"),
+    ("boaform", "GoAhead（九联 UNG 系列）"),
+    ("mini web server", "通用 Mini web server"),
+    ("webcmcc", "移动 WebCMCC 定制页"),
+]
+
+
 def fingerprint(ip):
-    """打印设备指纹，便于判断固件家族。"""
+    """探测 Web 指纹，返回命中的家族标记列表。"""
     try:
         req = urllib.request.Request("http://%s/" % ip,
                                      headers={"User-Agent": "Mozilla/5.0 Chrome/120"})
         with urllib.request.urlopen(req, timeout=6) as r:
             server = r.headers.get("Server", "-")
-            body = r.read().decode("utf-8", "replace")
+            body = _decode(r.read(), r.headers.get("Content-Type", ""))
         title = re.search(r"<title>([^<]*)</title>", body, re.I)
-        hint = []
         low = body.lower()
-        if "getpage.gch" in low or "frm_logintoken" in low:
-            hint.append("中兴 .gch 系")
-        if "ssmp" in low:
-            hint.append("华为 ssmp 系")
-        log("DATA", "指纹 Server=%s  title=%s  %s"
-            % (server, title.group(1) if title else "-", " / ".join(hint) or "未识别"))
-        return " / ".join(hint)
+        hits = [name for key, name in MARKERS if key in low]
+        log("DATA", "指纹 Server=%s  title=%s  特征=%s"
+            % (server, title.group(1) if title else "-", " / ".join(hits) or "未识别"))
+        return hits
     except Exception as e:
         log("WARN", "指纹获取失败: %s" % e)
-        return ""
+        return []
+
+
+def suggest_from_fingerprint(hits, ip):
+    """根据指纹给出下一步建议。"""
+    text = " ".join(hits)
+    if "中兴工厂模式" in text or "中兴" in text:
+        log("HINT", "该设备疑似中兴方案，试试工厂模式开 Telnet：")
+        log("HINT", "  python3 -m ontkit zte -H %s -p 8080 --mode factory" % ip)
+    elif "华为" in text:
+        log("HINT", "该设备是华为 ssmp 方案：")
+        log("HINT", "  python3 -m ontkit huawei -H %s" % ip)
+    elif "GoAhead" in text:
+        log("HINT", "GoAhead 方案可试前端接口开 Telnet（浏览器控制台执行）：")
+        log("HINT", "  sendRequest('/boaform/set_telnet_enabled_url',{telnet_lan_enabled:'1'})")
+    else:
+        log("HINT", "未识别出固件家族，可用 ontkit probe 进一步探测：")
+        log("HINT", "  python3 -m ontkit probe -H %s" % ip)
 
 
 # ─────────────────────────────── Telnet ───────────────────────────────
@@ -588,14 +616,8 @@ def main():
             log("WARN", "Telnet 端口未开放，无法继续")
             if not opened:
                 log("INFO", "开始识别固件类型 …")
-                fam = fingerprint(ip)
-                if "华为" in fam:
-                    log("HINT", "这是华为 ssmp 固件：用 python3 -m ontkit huawei -H %s" % ip)
-                elif "中兴" in fam:
-                    log("HINT", "这是中兴 .gch 固件：用 python3 -m ontkit zte -H %s -p 8080 --mode factory" % ip)
-                else:
-                    log("HINT", "试试：python3 -m ontkit probe -H %s" % ip)
-                log("HINT", "该固件可能没有 telnet.gch 接口，本脚本的开启方式不适用")
+                suggest_from_fingerprint(fingerprint(ip), ip)
+                log("HINT", "该固件的 telnet 开启方式可能与本脚本不同")
             else:
                 log("HINT", "telnet.gch 已返回 Success 但端口未监听：确认设备没禁用 Telnet 服务")
             return 3

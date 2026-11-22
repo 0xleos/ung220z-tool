@@ -161,3 +161,18 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 
 - **蓝色大肥鱼** —— 指出并修复了三处会导致「静默假失败」的关键缺陷（解密校验、单行 XML 串表、GBK 解码），并补充了异常清理、口令边界、日志脱敏等改进。原始补丁见 PR #6。
 - **[@yitan-xini](https://github.com/yitan-xini)** —— 代为整理与提交上述补丁。
+
+## 机型兼容性
+
+根据 issue 反馈整理，不同固件差异极大，报错前请先对照：
+
+| 型号 | 现象 | 判断 | 下一步 |
+|---|---|---|---|
+| UNG220Z | 全流程通过 | 中兴 `.gch` | ✅ 目标机型 |
+| UNP720Z | `telnet.gch` 成功，Telnet 登录被拒 | Telnet 与 Web 两套账号 | 先用 `useradmin/useradmin`，新版会依次试 8 组 |
+| HG6042A1 | `telnet.gch` 400，页面含 `get_factory_mode` | 中兴工厂模式 | `ontkit zte --mode factory` |
+| GM232（V1A0.A04.01） | 404 / 400 | 非 `.gch` 或路径不同 | 提供登录页标题与 `Server` 头 |
+| SK-D740L | 23 端口未开放 | Telnet 服务未启用 | 先在 Web 后台开启，或确认固件是否支持 |
+| 返回 `Mini web server` | 404 | 通用 Web 服务器 | 不是本工具适用机型 |
+
+判断方法：脚本失败时会自动打印 `指纹 Server=... title=... 特征=...`，把这行贴出来即可。
