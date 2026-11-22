@@ -96,3 +96,43 @@ python3 ung220z.py -i 192.168.1.1 -u user -p '你的密码' --no-browser
 ## 免责声明
 
 本项目仅用于教育与自有设备维护。使用者应确保对目标设备拥有合法管理权限。
+
+## 排障
+
+### `telnet.gch` 返回 404
+
+说明该固件没有这个接口，**不是九联/吉比特的 `.gch` 体系**，本脚本的开启方式不适用。
+脚本会打印设备指纹（`Server` 头 + 页面标题）帮助判断。下一步：
+
+```bash
+python3 -m ontkit probe -H 192.168.1.1          # 识别固件家族
+python3 -m ontkit zte   -H 192.168.1.1 -p 8080  # 中兴系（webFac 工厂模式）
+python3 -m ontkit huawei -H 192.168.1.1         # 华为系（ssmp）
+```
+
+### `telnet.gch` 成功但 23 端口未监听
+
+- 设备可能在 Web 后台把 Telnet 服务关闭了，只留了开关接口
+- 也可能需要几秒才起监听，等一下重试
+
+### Telnet 能连上但登录被拒
+
+Telnet 与 Web 是**两套账号库**。脚本会依次尝试：
+
+1. 你填的 Web 账号（如 `useradmin`）
+2. `CMCCAdmin` + 同一口令
+3. `--telnet-password` 指定值
+4. Web 侧侦察：`manager_aduser_conf_t.gch&IF_INDEX=0` 读管理员行 → 用其口令登录 → `tele_sec_tserver_t.gch` 取 `TS_UPwd`
+5. 出厂默认组合
+
+也可以手动在浏览器（已登录状态）打开：
+
+```
+http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
+```
+
+页面源码里 `TS_UName` / `TS_UPwd` 就是 Telnet 账号密码。
+
+### 登录失败次数超限
+
+设备通常 3 次失败进入延时校验，**停止重试**，静默等待 10~30 分钟。

