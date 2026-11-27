@@ -6,7 +6,8 @@ ung220z.py —— UNG220Z / Unionman 中国移动网关 凭据提取工具
 流程
   1. 询问网关地址、普通账户、密码
   2. 补全 http://<ip>/usr=<user>&psw=<pass>&cmd=1&telnet.gch 并发送给浏览器，开启 Telnet
-  3. 走 Telnet 通道登录（全程不建立 Web 会话，避免把管理页锁死）
+     H10g-ax 没有该接口时，改为 Web 登录并提交 tele_sec_tserver_t.gch（只开 LAN）
+  3. 走 Telnet 通道登录（UNG220Z 全程不建立 Web 会话，避免把管理页锁死）
   4. 解密配置库，提取全部凭据
   5. 按 [HH:MM:SS] TAG 格式打印日志，并落盘
 
@@ -15,6 +16,7 @@ ung220z.py —— UNG220Z / Unionman 中国移动网关 凭据提取工具
   python3 ung220z.py -i 192.168.1.1 -u user -p 'xxxx' --no-browser
 """
 import argparse
+import base64
 import getpass
 import html as html_mod
 import http.cookiejar
@@ -151,7 +153,7 @@ def unlock_web(ip, tn):
     return False
 
 
-def enable_telnet(ip, user, pw, open_browser=True):
+def enable_telnet(ip, user, pw, open_browser=True, timeout=8):
     base = "http://%s/" % ip
     # 口令里的 % & # ? + 空格 必须先百分号编码，否则服务器会返回 400 Bad Request
     # （社区实测：aDm8H%MdA 必须写成 aDm8H%25MdA）
@@ -172,7 +174,7 @@ def enable_telnet(ip, user, pw, open_browser=True):
     missing = False
     for url in variants:
         try:
-            body = http_get(url)
+            body = http_get(url, timeout=timeout)
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 missing = True
@@ -219,8 +221,11 @@ def fingerprint(ip):
         title = re.search(r"<title>([^<]*)</title>", body, re.I)
         low = body.lower()
         hits = [name for key, name in MARKERS if key in low]
+        title_s = title.group(1).strip() if title else ""
+        if "h10g" in title_s.lower():
+            hits.append("H10g-ax")
         log("DATA", "指纹 Server=%s  title=%s  特征=%s"
-            % (server, title.group(1) if title else "-", " / ".join(hits) or "未识别"))
+            % (server, title_s or "-", " / ".join(hits) or "未识别"))
         return hits
     except Exception as e:
         log("WARN", "指纹获取失败: %s" % e)
@@ -229,6 +234,10 @@ def fingerprint(ip):
 
 def suggest_from_fingerprint(hits, ip):
     """根据指纹给出下一步建议。"""
+    if "H10g-ax" in hits:
+        log("HINT", "H10g-ax 不能用 telnet.gch 或 8080 webFac，改走 Web 页开 LAN Telnet：")
+        log("HINT", "  python3 models/h10g_ax.py -H %s -u <贴纸账号> -P '<贴纸密码>' --enable-telnet --extract" % ip)
+        return
     text = " ".join(hits)
     if "中兴工厂模式" in text or "中兴" in text:
         log("HINT", "该设备疑似中兴方案，试试工厂模式开 Telnet：")
@@ -245,6 +254,19 @@ def suggest_from_fingerprint(hits, ip):
 
 
 # ─────────────────────────────── Telnet ───────────────────────────────
+# 「$ 」要求美元符后面还有空格，匹配不到 BusyBox ash 结尾的「~ $」。
+TELNET_OK = ("/ #", "~ #", "~ $", "# ", "$ ")
+TELNET_AFTER_PW = TELNET_OK + ("incorrect", "Login:")
+
+
+def is_shell_prompt_line(line):
+    s = (line or "").strip()
+    if not s:
+        return False
+    # 「# 」「$ 」在 strip 后只剩「#」「$」，仍是提示符行。
+    return any(s.startswith(p) or s == p.strip() for p in TELNET_OK)
+
+
 def _parse(buf):
     out, rep, i = bytearray(), bytearray(), 0
     while i < len(buf):
@@ -323,8 +345,8 @@ class Telnet:
                 return False
             self.buf = ""
             self.send(pw)
-            got = self.read_until_any(["/ #", "# ", "$ ", "incorrect", "Login:"], 10)
-            if got in ("/ #", "# ", "$ "):
+            got = self.read_until_any(TELNET_AFTER_PW, 10)
+            if got in TELNET_OK:
                 log("AUTH", "Telnet %s / *** → 登录成功" % user)
                 return True
             log("AUTH", "Telnet %s / *** → 拒绝" % user)
@@ -342,7 +364,7 @@ class Telnet:
         lines = []
         for ln in out.splitlines():
             s = ln.strip()
-            if not s or s.startswith("/ #") or s.startswith("# ") or s.startswith("$ "):
+            if not s or is_shell_prompt_line(s):
                 continue
             if s == cmdline or (s.startswith("echo ") and tag in s):
                 continue
@@ -469,14 +491,23 @@ class WebSession:
 
     def login(self, user, pw):
         page = self.get("")
-        m = re.search(r'Frm_Logintoken"\)\.value\s*=\s*"(\d+)"', page)
-        token = m.group(1) if m else "7"
-        body = self.post_form("", {
-            "username": user,
-            "logincode": base64.b64encode(pw.encode()).decode(),
-            "textpwd": "", "frashnum": "", "ieversion": "1",
-            "Frm_Logintoken": token, "action": "login",
-        })
+        try:
+            from ontkit.zte_web import login_form
+            fields = login_form(user, pw, page)
+        except RuntimeError as e:
+            log("WARN", str(e))
+            return False
+        except Exception as e:
+            log("WARN", "登录编码失败（%s），回退 base64" % e)
+            m = re.search(r'Frm_Logintoken"\)\.value\s*=\s*"(\d+)"', page)
+            token = m.group(1) if m else "7"
+            fields = {
+                "username": user,
+                "logincode": base64.b64encode(pw.encode()).decode(),
+                "textpwd": "", "frashnum": "", "ieversion": "1",
+                "Frm_Logintoken": token, "action": "login",
+            }
+        body = self.post_form("", fields)
         return 'name="logincode"' not in body and len(body) > 5000
 
     def page(self, name):
@@ -514,6 +545,11 @@ def web_recon(ip, user, pw):
                 vals = parse_values(s.page("tele_sec_tserver_t.gch"))
                 tu, tp = vals.get("TS_UName"), vals.get("TS_UPwd")
                 if tp:
+                    try:
+                        from ontkit.zte_web import decrypt_ts_password
+                        tp = decrypt_ts_password(tp)
+                    except Exception as e:
+                        log("WARN", "Telnet 口令解密失败: %s" % e)
                     log("DATA", "Telnet 配置 %s / %s" % (tu or u, tp))
                     out.append((tu or u, tp))
             except Exception as e:
@@ -521,6 +557,46 @@ def web_recon(ip, user, pw):
     except Exception as e:
         log("WARN", "Web 侦察异常: %s" % e)
     return out
+
+
+def port_open_soon(ip, port, timeout):
+    """服务刚被打开时可能还没监听，短间隔再探几次。"""
+    slice_t = min(2.0, timeout)
+    for i in range(4):
+        if probe_port(ip, port, slice_t):
+            return True
+        if i < 3:
+            time.sleep(0.4)
+    return False
+
+
+def enable_zte_web_telnet(ip, user, pw, timeout=8):
+    """H10g-ax 等 getAES 登录页：Web 登录后在 tele_sec_tserver_t.gch 打开 LAN Telnet。
+
+    登录页不是这套 AES 时直接返回，避免在 UNG220Z 上占用 Web 会话。
+    返回 (telnet 用户名, 明文口令)，失败返回 None。
+    """
+    try:
+        from ontkit.zte_web import ZteWeb, uses_aes_login
+    except Exception as e:
+        log("WARN", "无法加载中兴 Web 模块：%s" % e)
+        return None
+    try:
+        page = http_get("http://%s/" % ip, timeout=timeout)
+    except Exception as e:
+        log("WARN", "读取登录页失败：%s" % e)
+        return None
+    if not uses_aes_login(page):
+        return None
+    log("INFO", "检测到 AES 登录页，改走 tele_sec_tserver_t.gch 开启 Telnet")
+    w = ZteWeb(ip, 80, user, pw, timeout)
+    if not w.login():
+        return None
+    try:
+        return w.enable_telnet()
+    except Exception as e:
+        log("WARN", "开启 Telnet 失败：%s" % e)
+        return None
 
 
 def telnet_any(ip, pairs, port=23, timeout=8):
@@ -613,26 +689,39 @@ def main():
         log("INFO", "补全 URL: http://%s/usr=%s&psw=***&cmd=1&telnet.gch" % (ip, user))
         opened = enable_telnet(ip, user, pw, open_browser=not a.no_browser, timeout=a.timeout)
 
+        h10g_cred = None
         if not probe_port(ip, a.telnet_port, a.timeout):
             log("PROBE", "TCP %d/%s → closed" % (a.telnet_port, ip))
-            log("WARN", "Telnet 端口未开放，无法继续")
             if not opened:
-                log("INFO", "开始识别固件类型 …")
-                suggest_from_fingerprint(fingerprint(ip), ip)
-                log("HINT", "该固件的 telnet 开启方式可能与本脚本不同")
+                h10g_cred = enable_zte_web_telnet(ip, user, pw, timeout=a.timeout)
+            if h10g_cred and port_open_soon(ip, a.telnet_port, a.timeout):
+                log("PROBE", "TCP %d/%s → open" % (a.telnet_port, ip))
             else:
-                log("HINT", "telnet.gch 已返回 Success 但端口未监听：确认设备没禁用 Telnet 服务")
-            return 3
-        log("PROBE", "TCP %d/%s → open" % (a.telnet_port, ip))
+                log("WARN", "Telnet 端口未开放，无法继续")
+                if not opened:
+                    log("INFO", "开始识别固件类型 …")
+                    hits = fingerprint(ip)
+                    suggest_from_fingerprint(hits, ip)
+                    if "H10g-ax" not in hits:
+                        log("HINT", "该固件的 telnet 开启方式可能与本脚本不同")
+                else:
+                    log("HINT", "telnet.gch 已返回 Success 但端口未监听：确认设备没禁用 Telnet 服务")
+                return 3
+        else:
+            log("PROBE", "TCP %d/%s → open" % (a.telnet_port, ip))
 
         # ── Telnet 登录：多账号多口令，逐级升级 ──
-        pairs = [(user, pw)]                                  # ① 你填的账号本人
+        pairs = []
+        if h10g_cred:
+            pairs.append(h10g_cred)                           # ① 配置页上的 Telnet 账号
+        pairs.append((user, pw))                              # ② 你填的账号本人
         if a.telnet_user and a.telnet_user != user:
-            pairs.append((a.telnet_user, pw))                 # ② CMCCAdmin + 同一口令
+            pairs.append((a.telnet_user, pw))                 # ③ CMCCAdmin + 同一口令
         if a.telnet_password:
-            pairs.append((a.telnet_user, a.telnet_password))  # ③ 命令行指定
-        pairs += web_recon(ip, user, pw)                      # ④ Web 侧侦察
-        pairs += DEFAULT_CREDS                                # ⑤ 出厂默认组合
+            pairs.append((a.telnet_user, a.telnet_password))  # ④ 命令行指定
+        if not h10g_cred:
+            pairs += web_recon(ip, user, pw)                  # ⑤ Web 侧侦察
+        pairs += DEFAULT_CREDS                                # ⑥ 出厂默认组合
 
         tn = telnet_any(ip, pairs, port=a.telnet_port, timeout=a.timeout)
         if not tn:
@@ -648,7 +737,10 @@ def main():
 
         log("SHELL", "id → %s" % tn.run("id", timeout=a.timeout))
         log("SHELL", "uname -a → %s" % tn.run("uname -a", timeout=a.timeout))
-        log("INFO", "Web 会话全程未占用（避免管理页被锁）")
+        if h10g_cred:
+            log("INFO", "已通过 Web 会话开启 LAN Telnet")
+        else:
+            log("INFO", "Web 会话全程未占用（避免管理页被锁）")
 
         dec = tn.run("sidbg 1 DB decry %s" % CFG_ENC, timeout=max(20.0, a.timeout * 3))
         # ls 的报错同样落在 pty 上，非空输出不能代表文件存在
