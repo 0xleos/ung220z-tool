@@ -9,6 +9,7 @@
 | 九联 UNG853H | 九联（移动定制） | ZTE 系 | 80 | `.gch` + `lastgood.xml` | 推断，待真机验证 |
 | 吉比特 H3-2 | 吉比特 | ZTE 系 | 80 | `.gch` + `sendcmd` | 推断，待真机验证 |
 | 中兴 ZXHN G7615 | 中兴 | ZTE 系 | 8080 | `webFac` 工厂模式 | 协议已按公开实现移植 |
+| 中兴 H10g-ax | 中兴（移动） | ZTE 系 | 80 | `.gch` + AES 登录，`tele_sec_tserver_t.gch` 开 LAN Telnet | 社区记录，未在本仓库复现 |
 | 烽火 HG6042A1 | 烽火 | FiberHome | 8080 | `telnetenable.cgi?key=<MAC>` | 有公开案例，未复现 |
 | 华为 HS8145X6 | 华为 | 华为 ssmp | 80 | Web 登录 → 开 Telnet | 实验性 |
 | 华为 B866-L1 | 华为 | 华为 ssmp | 80 | 同上 | 实验性 |
@@ -34,6 +35,7 @@ python3 -m ontkit huawei -H 192.168.1.1
 python3 models/ung853h.py  -H 192.168.1.1 -u user -P '背面贴纸密码' --extract
 python3 models/h3_2.py     -H 192.168.1.1 -u user -P '背面贴纸密码' --extract
 python3 models/g7615.py    -H 192.168.1.1 --mode factory --enable-telnet
+python3 models/h10g_ax.py  -H 192.168.1.1 -u user -P '贴纸密码' --enable-telnet --extract
 python3 models/hs8145x6.py -H 192.168.1.1
 python3 models/b866l1.py   -H 192.168.1.1
 ```
@@ -75,6 +77,21 @@ sidbg 1 DB decry /userconfig/cfg/db_user_cfg.xml
 ```
 
 解出的明文配置包含 `DevAuthInfo`（Web 账号）、`TelnetUser`、`WANCPPP`（PPPoE）、`WLANPSK`（WiFi 密钥）。
+
+## H10g-ax（Web 开 Telnet）
+
+`telnet.gch` 与 8080 `webFac` 在该机型上不可用。登录页 `dosubmit()` 走 `getAES()`：AES-128-CBC + PKCS7，key 为 `1111111111111111`，iv 为 `0000000000000000`，密文再 base64；`Frm_Logintoken` 固定填 `2`。
+
+```bash
+python3 models/h10g_ax.py -H 192.168.1.1 -u user -P '贴纸密码' --enable-telnet --extract
+```
+
+1. POST `/`：`username`、`logincode`（上面的 AES）、`Frm_Logintoken=2`、`action=login`
+2. GET `getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch`，读出 `TS_UName`、`TS_UPwd`（同一套 AES 可解密）和 `var session_token`
+3. POST 同一地址：`TS_Enable=1`、`Lan_Enable=1`、`Wan_Enable=0`、原来的 `TS_UName` / `TS_UPwd`、`IF_ACTION=apply`、`_SESSION_TOKEN`
+4. Telnet 登录后 `sidbg 1 DB decry /userconfig/cfg/db_user_cfg.xml`。BusyBox ash 的提示符是 `~ $`
+
+来源：[Hut-hzf/ung220z-tool#23](https://github.com/Hut-hzf/ung220z-tool/issues/23)。
 
 ## 华为系原理（实验性）
 

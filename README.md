@@ -108,7 +108,7 @@ python3 ung220z.py -i 192.168.1.1 -u user -p '你的密码' --no-browser
 | 环节 | 说明 |
 |---|---|
 | 开 Telnet | `GET /usr=<user>&psw=<pass>&cmd=1&telnet.gch`，返回 `TelnetSet Success!` 即成功 |
-| Web 登录 | 密码前端只做 base64，`Frm_Logintoken` 每次响应递增，必须回填实时值 |
+| Web 登录 | UNG220Z 密码只做 base64，`Frm_Logintoken` 回填页面里的值。H10g-ax 的 `getAES()` 是 AES-128-CBC + PKCS7，token 固定为 `2` |
 | 配置解密 | `sidbg 1 DB decry` 无口令即可解密，得到明文 XML |
 | root 口令 | `/etc/shadow` 中为 SHA-256 crypt，工具会用常见出厂口令比对 |
 
@@ -147,8 +147,11 @@ python3 models/ung853h.py  -H 192.168.1.1 -u user -P '贴纸密码' --extract
 ```bash
 python3 -m ontkit probe -H 192.168.1.1          # 识别固件家族
 python3 -m ontkit zte   -H 192.168.1.1 -p 8080  # 中兴系（webFac 工厂模式）
+python3 models/h10g_ax.py -H 192.168.1.1 -u user -P '贴纸密码' --enable-telnet --extract
 python3 -m ontkit huawei -H 192.168.1.1         # 华为系（ssmp）
 ```
+
+登录页 title 为 `H10g-ax` 时，`telnet.gch` 和 8080 `webFac` 都不可用。用贴纸上的普通账号走 Web 登录（AES），再向 `tele_sec_tserver_t.gch` 提交开启，且只开 LAN。
 
 ### `telnet.gch` 成功但 23 端口未监听
 
@@ -178,6 +181,17 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 设备通常 3 次失败进入延时校验，**停止重试**，静默等待 10~30 分钟。
 
 ## 修复记录
+
+### v1.3
+
+| 问题 | 修复 |
+|---|---|
+| `enable_telnet()` 被传入 `timeout`，定义里没有这个参数 | 补上参数，并传给 `http_get` |
+| `WebSession.login()` 使用 `base64`，文件未导入 | 补 `import base64` |
+| 把 H10g-ax 的登录口令当成 base64 | 仅 H10g-ax / `getAES()` 页面改用 AES-128-CBC + PKCS7；其它机型仍是 base64。H10g-ax 的 `Frm_Logintoken` 固定为 `2` |
+| BusyBox ash 提示符 `~ $` 被当成登录失败 | 成功提示符增加 `~ $` 与 `~ #`（` $ ` 要求美元符后面还有空格，对不上结尾的 `~ $`） |
+
+H10g-ax 另走 `models/h10g_ax.py`：Web 登录后 POST `tele_sec_tserver_t.gch`（`TS_Enable=1`、`Lan_Enable=1`、`Wan_Enable=0`），用页面上的 `TS_UName` / `TS_UPwd`（同一套 AES 可解密）登录 Telnet。见上游 [issue #23](https://github.com/Hut-hzf/ung220z-tool/issues/23)。
 
 ### v1.2
 
@@ -238,6 +252,7 @@ http://<光猫IP>/getpage.gch?pid=1002&nextpage=tele_sec_tserver_t.gch
 | 型号 | 状态 | 关键方法 | 来源 |
 |---|---|---|---|
 | UNG220Z | ✅ 真机验证 | `telnet.gch` → 越权读账号 → `sidbg` 解密 | 本项目实测 |
+| H10g-ax | 📄 社区记录 | Web 登录 AES-CBC，`tele_sec_tserver_t.gch` 只开 LAN Telnet，再 `sidbg` 解密 | [issue #23](https://github.com/Hut-hzf/ung220z-tool/issues/23) |
 | UNG953h1-S | 📄 公开案例 | Telnet 默认 `useradmin/useradmin`；配置解密用 `lastgood.xml` | [cnblogs](https://www.cnblogs.com/Prego/p/22631311) |
 | HG6042A1 | 📄 公开案例 | **烽火**：`/cgi-bin/telnetenable.cgi?telnetenable=1&key=<MAC>`，登录 `admin/Fh@<MAC后6位>`，`load_cli factory` → `show admin_pwd` | [阿凡博客](https://blog.iafan.com/post-6.html) |
 | GM232 | 📄 公开案例 | `telnet.gch` **必须把 `%` 编码成 `%25`**；Telnet 口令在 `config.bin` 备份里（RouterPassView 搜 `TS_UPwd`） | [萝卜头论坛](https://bbs.luobotou.org/forum.php?mod=viewthread&tid=49623) |

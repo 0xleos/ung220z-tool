@@ -67,6 +67,16 @@ class Http:
 
 # ───────────────────────────── Telnet ─────────────────────────────
 IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
+# BusyBox ash 的非 root 提示符是「~ $」（结尾可以没有空格），root 是「~ #」。
+SHELL_PROMPTS = ("/ #", "~ #", "~ $", "# ", "$ ")
+
+
+def is_shell_prompt_line(line):
+    s = (line or "").strip()
+    if not s:
+        return False
+    # 「# 」「$ 」在 strip 后只剩「#」「$」，仍是提示符行。
+    return any(s.startswith(p) or s == p.strip() for p in SHELL_PROMPTS)
 
 
 def _parse(buf):
@@ -138,7 +148,7 @@ class Telnet:
         self.read_until_any(["__X__"], timeout)
         out = self.buf.split("__X__")[0]
         lines = [l.rstrip() for l in out.splitlines()
-                 if l.strip() and not l.strip().startswith("/ #") and l.strip() != "echo"]
+                 if l.strip() and l.strip() != "echo" and not is_shell_prompt_line(l)]
         if lines and cmd[:20] in lines[0]:
             lines = lines[1:]
         return "\n".join(lines).strip()
@@ -153,8 +163,9 @@ class Telnet:
                 return False
             self.buf = ""
             self.send(pw)
-            got = self.read_until_any(["/ #", "$", "#", "incorrect", "Login:"], timeout)
-            if got in ("/ #", "#", "$"):
+            got = self.read_until_any(
+                ("/ #", "~ #", "~ $", "$", "#", "incorrect", "Login:"), timeout)
+            if got in ("/ #", "~ #", "~ $", "#", "$"):
                 return True
         return False
 

